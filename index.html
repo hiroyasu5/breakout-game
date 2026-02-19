@@ -151,11 +151,11 @@ const STAGE_NAMES = [
 ];
 
 function buildStage(level) {
-  const ROWS = 14;
+  const ROWS = 28;
   const bw = (W - 16 * SCALE) / COLS;
   const bh = 18 * SCALE;
   const offsetX = 8 * SCALE;
-  const offsetY = 40 * SCALE;
+  const offsetY = 30 * SCALE;
   const grid = [];
 
   // Build grid pattern: 0=empty, 1-5=hp
@@ -262,10 +262,9 @@ function buildStage(level) {
   }
 
   // ---- Level-based block density increase ----
-  // Level 1: base design only. Each level adds more random blocks.
-  // By level 5+: screen is getting packed. Level 8+: absurd density.
-  const fillChance = Math.min(0.95, (level - 1) * 0.12); // 0%, 12%, 24%, 36%...95%
-  const extraMaxHP = Math.min(5, 1 + Math.floor(level / 2)); // HP of extra blocks scales too
+  // Level 1: 30% fill. Each level ramps up. Level 5+: nearly full. Level 8: wall-to-wall.
+  const fillChance = Math.min(0.97, 0.30 + (level - 1) * 0.10); // 30%, 40%, 50%...97%
+  const extraMaxHP = Math.min(5, 1 + Math.floor(level / 2));
   const seed = level * 137.5;
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
@@ -1002,20 +1001,26 @@ function startCinematic(type, itemX) {
       cinematic.data.processed = new Set();
       break;
     case 'meteor': {
-      cinematic.duration = 3.5;
-      const alive = blocks.filter(b => b.alive);
-      const count = Math.min(alive.length, 10 + Math.floor(Math.random() * 5));
-      const shuffled = [...alive].sort(() => Math.random() - 0.5);
-      cinematic.data.meteors = shuffled.slice(0, count).map((b, i) => ({
-        block: b,
-        targetX: b.x + b.w / 2,
-        targetY: b.y + b.h / 2,
-        startX: b.x + b.w / 2 + (Math.random() - 0.5) * 120 * SCALE,
-        startY: -40 * SCALE,
-        delay: 0.4 + i * 0.18,
-        hit: false,
-        currentX: 0, currentY: 0,
-      }));
+      cinematic.duration = 3.0;
+      // 3-4 piercing meteors that fall through columns, destroying everything in path
+      const meteorCount = 3 + Math.floor(Math.random() * 2);
+      const usedCols = new Set();
+      cinematic.data.meteors = [];
+      for (let i = 0; i < meteorCount; i++) {
+        let col;
+        do { col = Math.floor(Math.random() * COLS); } while (usedCols.has(col) && usedCols.size < COLS);
+        usedCols.add(col);
+        const bw = (W - 16 * SCALE) / COLS;
+        const x = 8 * SCALE + col * bw + bw / 2;
+        cinematic.data.meteors.push({
+          x: x,
+          currentY: -30 * SCALE,
+          delay: 0.3 + i * 0.4,
+          speed: (H + 60 * SCALE) / 1.2, // traverse screen in 1.2s
+          processed: new Set(),
+          active: false,
+        });
+      }
       break;
     }
     case 'starburst':
@@ -1130,23 +1135,25 @@ function updateCinematic(dt) {
     }
     case 'meteor': {
       for (const m of cinematic.data.meteors) {
-        if (m.hit || t < m.delay) continue;
-        const progress = Math.min(1, (t - m.delay) / 0.25);
-        m.currentX = m.startX + (m.targetX - m.startX) * progress;
-        m.currentY = m.startY + (m.targetY - m.startY) * Math.pow(progress, 0.7);
-        if (progress < 1) {
-          spawnParticles(m.currentX, m.currentY, '#f80', 2, 0.6);
-        }
-        if (progress >= 1 && !m.hit) {
-          m.hit = true;
-          if (m.block.alive) {
-            m.block.alive = false;
-            m.block.hp = 0;
+        if (t < m.delay) continue;
+        m.active = true;
+        m.currentY = -30 * SCALE + (t - m.delay) * m.speed;
+        spawnParticles(m.x, m.currentY, '#f80', 3, 0.8);
+        // Destroy all blocks the meteor passes through
+        const meteorRadius = 18 * SCALE;
+        for (const b of blocks) {
+          if (!b.alive || m.processed.has(b)) continue;
+          const bx = b.x + b.w / 2, by = b.y + b.h / 2;
+          if (Math.abs(bx - m.x) < b.w / 2 + meteorRadius && Math.abs(by - m.currentY) < b.h / 2 + meteorRadius) {
+            m.processed.add(b);
+            b.alive = false;
+            b.hp = 0;
             score += 20 * level;
-            spawnExplosion(m.block.x + m.block.w/2, m.block.y + m.block.h/2);
+            spawnParticles(b.x + b.w/2, b.y + b.h/2, b.baseColor, 10, 1.2);
+            addShake(2);
           }
-          scoreEl.textContent = score;
         }
+        scoreEl.textContent = score;
       }
       break;
     }
@@ -1373,18 +1380,25 @@ function drawCinematic() {
     }
     case 'meteor': {
       for (const m of cinematic.data.meteors) {
-        if (m.hit || t < m.delay) continue;
-        // Meteor body
+        if (!m.active) continue;
+        // Scorched trail line
+        ctx.strokeStyle = 'rgba(255,68,0,0.3)';
+        ctx.lineWidth = 20 * SCALE;
+        ctx.beginPath();
+        ctx.moveTo(m.x, -30 * SCALE);
+        ctx.lineTo(m.x, m.currentY);
+        ctx.stroke();
+        // Meteor body (large, piercing)
         ctx.fillStyle = '#ff4400';
         ctx.shadowColor = '#ff8800';
-        ctx.shadowBlur = 18 * SCALE;
+        ctx.shadowBlur = 25 * SCALE;
         ctx.beginPath();
-        ctx.arc(m.currentX, m.currentY, 10 * SCALE, 0, Math.PI * 2);
+        ctx.arc(m.x, m.currentY, 14 * SCALE, 0, Math.PI * 2);
         ctx.fill();
         // Bright core
         ctx.fillStyle = '#ffcc00';
         ctx.beginPath();
-        ctx.arc(m.currentX, m.currentY, 5 * SCALE, 0, Math.PI * 2);
+        ctx.arc(m.x, m.currentY, 7 * SCALE, 0, Math.PI * 2);
         ctx.fill();
         ctx.shadowBlur = 0;
       }
