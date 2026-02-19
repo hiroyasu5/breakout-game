@@ -1190,11 +1190,14 @@ function updateCinematic(dt) {
     }
     case 'tsunami': {
       if (t > 0.3 && t < 2.3) {
+        const waveHeight = 80 * SCALE; // ~4 rows tall
         cinematic.data.waveY = H + 20 * SCALE - ((t - 0.3) / 2.0) * (H + 80 * SCALE);
         const wy = cinematic.data.waveY;
         for (const b of blocks) {
           if (!b.alive || cinematic.data.processed.has(b)) continue;
-          if ((b.y + b.h) > wy) {
+          const by = b.y + b.h / 2;
+          // Only destroy blocks inside the wave band
+          if (by > wy && by < wy + waveHeight) {
             cinematic.data.processed.add(b);
             b.alive = false;
             b.hp = 0;
