@@ -1002,21 +1002,20 @@ function startCinematic(type, itemX) {
       break;
     case 'meteor': {
       cinematic.duration = 3.0;
-      // 3-4 piercing meteors that fall through columns, destroying everything in path
+      // 3-4 piercing meteors that fly diagonally, destroying everything in path
       const meteorCount = 3 + Math.floor(Math.random() * 2);
-      const usedCols = new Set();
       cinematic.data.meteors = [];
       for (let i = 0; i < meteorCount; i++) {
-        let col;
-        do { col = Math.floor(Math.random() * COLS); } while (usedCols.has(col) && usedCols.size < COLS);
-        usedCols.add(col);
-        const bw = (W - 16 * SCALE) / COLS;
-        const x = 8 * SCALE + col * bw + bw / 2;
+        const startX = Math.random() * W;
+        const angle = (0.6 + Math.random() * 0.8) * (Math.random() < 0.5 ? 1 : -1); // diagonal angle
+        const spd = (H + 60 * SCALE) / 1.2;
         cinematic.data.meteors.push({
-          x: x,
+          startX: startX,
+          currentX: startX,
           currentY: -30 * SCALE,
+          vx: Math.sin(angle) * spd * 0.5,
+          vy: Math.cos(angle) * spd,
           delay: 0.3 + i * 0.4,
-          speed: (H + 60 * SCALE) / 1.2, // traverse screen in 1.2s
           processed: new Set(),
           active: false,
         });
@@ -1143,14 +1142,16 @@ function updateCinematic(dt) {
       for (const m of cinematic.data.meteors) {
         if (t < m.delay) continue;
         m.active = true;
-        m.currentY = -30 * SCALE + (t - m.delay) * m.speed;
-        spawnParticles(m.x, m.currentY, '#f80', 3, 0.8);
+        const elapsed = t - m.delay;
+        m.currentX = m.startX + elapsed * m.vx;
+        m.currentY = -30 * SCALE + elapsed * m.vy;
+        spawnParticles(m.currentX, m.currentY, '#f80', 3, 0.8);
         // Destroy all blocks the meteor passes through
         const meteorRadius = 18 * SCALE;
         for (const b of blocks) {
           if (!b.alive || m.processed.has(b)) continue;
           const bx = b.x + b.w / 2, by = b.y + b.h / 2;
-          if (Math.abs(bx - m.x) < b.w / 2 + meteorRadius && Math.abs(by - m.currentY) < b.h / 2 + meteorRadius) {
+          if (Math.abs(bx - m.currentX) < b.w / 2 + meteorRadius && Math.abs(by - m.currentY) < b.h / 2 + meteorRadius) {
             m.processed.add(b);
             b.alive = false;
             b.hp = 0;
@@ -1176,6 +1177,7 @@ function updateCinematic(dt) {
           spawnParticles(b.x, b.y, '#ff0', 25, 2);
         }
         balls.push(...newBalls);
+        fireMode = 8; // All balls become piercing for 8 seconds
         flashAlpha = 0.6;
         addShake(12);
       }
@@ -1389,24 +1391,24 @@ function drawCinematic() {
     case 'meteor': {
       for (const m of cinematic.data.meteors) {
         if (!m.active) continue;
-        // Scorched trail line
+        // Diagonal scorched trail
         ctx.strokeStyle = 'rgba(255,68,0,0.3)';
         ctx.lineWidth = 20 * SCALE;
         ctx.beginPath();
-        ctx.moveTo(m.x, -30 * SCALE);
-        ctx.lineTo(m.x, m.currentY);
+        ctx.moveTo(m.startX, -30 * SCALE);
+        ctx.lineTo(m.currentX, m.currentY);
         ctx.stroke();
         // Meteor body (large, piercing)
         ctx.fillStyle = '#ff4400';
         ctx.shadowColor = '#ff8800';
         ctx.shadowBlur = 25 * SCALE;
         ctx.beginPath();
-        ctx.arc(m.x, m.currentY, 14 * SCALE, 0, Math.PI * 2);
+        ctx.arc(m.currentX, m.currentY, 14 * SCALE, 0, Math.PI * 2);
         ctx.fill();
         // Bright core
         ctx.fillStyle = '#ffcc00';
         ctx.beginPath();
-        ctx.arc(m.x, m.currentY, 7 * SCALE, 0, Math.PI * 2);
+        ctx.arc(m.currentX, m.currentY, 7 * SCALE, 0, Math.PI * 2);
         ctx.fill();
         ctx.shadowBlur = 0;
       }
