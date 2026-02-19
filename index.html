@@ -1058,9 +1058,9 @@ function startCinematic(type, itemX) {
     }
     case 'tsunami': {
       cinematic.duration = 2.0;
-      // Delete bottom 4 rows from the lowest alive block upward
+      // Delete bottom 6 rows from the lowest alive block upward
       const rowHeight = 18 * SCALE;
-      const deleteRows = 4;
+      const deleteRows = 6;
       let maxY = 0;
       for (const b of blocks) { if (b.alive && b.y + b.h > maxY) maxY = b.y + b.h; }
       cinematic.data.cutoff = maxY - deleteRows * rowHeight;
