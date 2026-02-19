@@ -95,7 +95,7 @@
     <canvas id="c"></canvas>
     <div id="overlay">
       <div id="overlayTitle" style="color:#4af">BREAKOUT</div>
-      <div id="overlayMsg">矢印キー / マウス / タッチでパドルを操作<br>ブロックを全て壊せ！</div>
+      <div id="overlayMsg">矢印キー / マウス / タッチでパドルを操作<br>ブロックを全て壊せ！<br><small>アイテムをキャッチして強化せよ！</small></div>
       <button id="startBtn">START GAME</button>
     </div>
   </div>
@@ -123,7 +123,6 @@ function getCanvasSize() {
   return { w: Math.floor(w), h: Math.floor(h) };
 }
 
-// ---- Game constants (scaled) ----
 let W, H, SCALE;
 function updateScale() {
   const { w, h } = getCanvasSize();
@@ -138,34 +137,54 @@ function updateScale() {
 // ---- Block config ----
 const BLOCK_ROWS = 6;
 const BLOCK_COLS = 10;
-const BLOCK_COLORS = [
-  '#ff4444', '#ff4444',
-  '#ff8800', '#ff8800',
-  '#ffcc00', '#ffcc00',
-  '#44ff44', '#44ff44',
-  '#44aaff', '#44aaff',
-  '#aa44ff', '#aa44ff',
+const BASE_COLORS = ['#ff4444','#ff8800','#ffcc00','#44ff44','#44aaff','#aa44ff'];
+
+// ---- Item config ----
+const ITEM_TYPES = [
+  { type: 'wide',  label: 'W', color: '#4af',  desc: 'パドル拡大' },
+  { type: 'shrink',label: 'S', color: '#f44',  desc: 'パドル縮小' },
+  { type: 'life',  label: 'L', color: '#f4f',  desc: 'ライフ+1' },
+  { type: 'multi', label: 'M', color: '#ff0',  desc: 'マルチボール' },
+  { type: 'slow',  label: 'D', color: '#4f4',  desc: '低速化' },
 ];
+const ITEM_DROP_CHANCE = 0.25;
 
 // ---- Game state ----
-let state = 'idle'; // idle | playing | lost | won
+let state = 'idle';
 let score = 0, life = 3, level = 1;
 let paddleX, paddleW, paddleH, paddleY;
-let ball = {};
+let balls = [];
 let blocks = [];
+let items = [];
+let particles = [];
 let animId;
 let keys = {};
 let mouseX = null;
 let touchX = null;
+let baseSpeed;
+let comboCount = 0;
+
+// ---- Block HP by level ----
+function getBlockHP(row, level) {
+  if (level <= 1) return row < 2 ? 2 : 1;
+  if (level <= 3) return row < 1 ? 3 : row < 3 ? 2 : 1;
+  return row < 2 ? 3 : row < 4 ? 2 : 1;
+}
+
+function getBlockColor(baseColor, hp, maxHP) {
+  const factor = 0.4 + 0.6 * (hp / maxHP);
+  const r = parseInt(baseColor.slice(1,3), 16);
+  const g = parseInt(baseColor.slice(3,5), 16);
+  const b = parseInt(baseColor.slice(5,7), 16);
+  return `rgb(${Math.floor(r*factor)},${Math.floor(g*factor)},${Math.floor(b*factor)})`;
+}
 
 function initLevel() {
   updateScale();
-  const pw = 100 * SCALE;
-  const ph = 12 * SCALE;
-  paddleW = pw;
-  paddleH = ph;
+  paddleW = 100 * SCALE;
+  paddleH = 12 * SCALE;
   paddleY = H - 40 * SCALE;
-  paddleX = W / 2 - pw / 2;
+  paddleX = W / 2 - paddleW / 2;
 
   const bw = (W - 20 * SCALE) / BLOCK_COLS;
   const bh = 22 * SCALE;
@@ -173,26 +192,38 @@ function initLevel() {
   const offsetY = 50 * SCALE;
   blocks = [];
   for (let r = 0; r < BLOCK_ROWS; r++) {
+    const hp = getBlockHP(r, level);
     for (let c = 0; c < BLOCK_COLS; c++) {
       blocks.push({
         x: offsetX + c * bw,
         y: offsetY + r * bh,
         w: bw - 4 * SCALE,
         h: bh - 4 * SCALE,
-        color: BLOCK_COLORS[r % BLOCK_COLORS.length],
+        baseColor: BASE_COLORS[r % BASE_COLORS.length],
+        hp: hp,
+        maxHP: hp,
         alive: true,
       });
     }
   }
 
-  const speed = (4 + level * 0.5) * SCALE;
-  const angle = (Math.random() * 60 + 60) * Math.PI / 180; // 60-120 deg
-  ball = {
-    x: W / 2,
-    y: paddleY - 20 * SCALE,
+  baseSpeed = (4 + level * 0.5) * SCALE;
+  balls = [createBall()];
+  items = [];
+  particles = [];
+  comboCount = 0;
+}
+
+function createBall(x, y, vx, vy) {
+  const bx = x !== undefined ? x : W / 2;
+  const by = y !== undefined ? y : paddleY - 20 * SCALE;
+  const speed = baseSpeed;
+  const angle = (Math.random() * 60 + 60) * Math.PI / 180;
+  return {
+    x: bx, y: by,
     r: 7 * SCALE,
-    vx: speed * Math.cos(angle) * (Math.random() < 0.5 ? 1 : -1),
-    vy: -speed * Math.abs(Math.sin(angle)),
+    vx: vx !== undefined ? vx : speed * Math.cos(angle) * (Math.random() < 0.5 ? 1 : -1),
+    vy: vy !== undefined ? vy : -speed * Math.abs(Math.sin(angle)),
   };
 }
 
@@ -203,6 +234,7 @@ function startGame() {
   mouseX = null; touchX = null;
   initLevel();
   cancelAnimationFrame(animId);
+  lastTime = 0;
   loop();
 }
 
@@ -212,11 +244,134 @@ function nextLevel() {
   initLevel();
 }
 
+// ---- Particles ----
+function spawnParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = (1 + Math.random() * 3) * SCALE;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 0.5 + Math.random() * 0.5,
+      color: color,
+      size: (2 + Math.random() * 4) * SCALE,
+    });
+  }
+}
+
+function updateParticles(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt * 60;
+    p.y += p.vy * dt * 60;
+    p.vy += 2 * SCALE * dt * 60;
+    p.life -= dt;
+    p.size *= 0.98;
+    if (p.life <= 0 || p.size < 0.5) {
+      particles.splice(i, 1);
+    }
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    const alpha = Math.max(0, p.life * 2);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---- Items ----
+function spawnItem(x, y) {
+  if (Math.random() > ITEM_DROP_CHANCE) return;
+  const itemDef = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
+  items.push({
+    x, y,
+    vy: 2 * SCALE,
+    size: 18 * SCALE,
+    ...itemDef,
+  });
+}
+
+function updateItems(dt) {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    it.y += it.vy * dt * 60;
+    // Catch by paddle
+    if (it.y + it.size/2 >= paddleY &&
+        it.y - it.size/2 <= paddleY + paddleH &&
+        it.x >= paddleX && it.x <= paddleX + paddleW) {
+      applyItem(it);
+      items.splice(i, 1);
+      continue;
+    }
+    // Off screen
+    if (it.y > H + it.size) {
+      items.splice(i, 1);
+    }
+  }
+}
+
+function applyItem(item) {
+  switch (item.type) {
+    case 'wide':
+      paddleW = Math.min(200 * SCALE, paddleW * 1.4);
+      break;
+    case 'shrink':
+      paddleW = Math.max(50 * SCALE, paddleW * 0.7);
+      break;
+    case 'life':
+      life++;
+      lifeEl.textContent = life;
+      break;
+    case 'multi':
+      const newBalls = [];
+      for (const b of balls) {
+        const speed = Math.hypot(b.vx, b.vy);
+        const angle1 = Math.atan2(b.vy, b.vx) + 0.3;
+        const angle2 = Math.atan2(b.vy, b.vx) - 0.3;
+        newBalls.push(createBall(b.x, b.y, speed * Math.cos(angle1), speed * Math.sin(angle1)));
+        newBalls.push(createBall(b.x, b.y, speed * Math.cos(angle2), speed * Math.sin(angle2)));
+      }
+      balls.push(...newBalls);
+      break;
+    case 'slow':
+      for (const b of balls) {
+        b.vx *= 0.6;
+        b.vy *= 0.6;
+      }
+      break;
+  }
+  // Flash effect
+  spawnParticles(item.x, item.y, item.color, 8);
+}
+
+function drawItems() {
+  for (const it of items) {
+    // Capsule background
+    ctx.fillStyle = it.color;
+    ctx.shadowColor = it.color;
+    ctx.shadowBlur = 10 * SCALE;
+    ctx.beginPath();
+    ctx.arc(it.x, it.y, it.size / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // Label
+    ctx.fillStyle = '#000';
+    ctx.font = `bold ${Math.floor(12 * SCALE)}px Courier New`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(it.label, it.x, it.y);
+  }
+}
+
 // ---- Draw ----
 function drawBackground() {
   ctx.fillStyle = '#0a0a1a';
   ctx.fillRect(0, 0, W, H);
-  // subtle grid
   ctx.strokeStyle = 'rgba(68,170,255,0.05)';
   ctx.lineWidth = 1;
   const gs = 40 * SCALE;
@@ -236,29 +391,53 @@ function drawPaddle() {
   ctx.shadowBlur = 0;
 }
 
-function drawBall() {
-  ctx.shadowColor = '#fff';
-  ctx.shadowBlur = 14 * SCALE;
-  ctx.fillStyle = '#fff';
-  ctx.beginPath();
-  ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.shadowBlur = 0;
+function drawBalls() {
+  for (const b of balls) {
+    ctx.shadowColor = '#fff';
+    ctx.shadowBlur = 14 * SCALE;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
 }
 
 function drawBlocks() {
   for (const b of blocks) {
     if (!b.alive) continue;
-    ctx.shadowColor = b.color;
+    const color = getBlockColor(b.baseColor, b.hp, b.maxHP);
+    ctx.shadowColor = color;
     ctx.shadowBlur = 8 * SCALE;
-    ctx.fillStyle = b.color;
+    ctx.fillStyle = color;
     roundRect(ctx, b.x, b.y, b.w, b.h, 4 * SCALE);
     ctx.fill();
-    // highlight
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    // Highlight
+    ctx.fillStyle = `rgba(255,255,255,${0.15 + 0.1 * b.hp})`;
     roundRect(ctx, b.x + 2 * SCALE, b.y + 2 * SCALE, b.w - 4 * SCALE, 5 * SCALE, 2 * SCALE);
     ctx.fill();
     ctx.shadowBlur = 0;
+    // HP indicator for multi-hit blocks
+    if (b.maxHP > 1) {
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${Math.floor(10 * SCALE)}px Courier New`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(b.hp, b.x + b.w/2, b.y + b.h/2);
+    }
+    // Crack lines for damaged blocks
+    if (b.hp < b.maxHP) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.lineWidth = 1;
+      const cx = b.x + b.w/2, cy = b.y + b.h/2;
+      for (let i = 0; i < (b.maxHP - b.hp); i++) {
+        ctx.beginPath();
+        ctx.moveTo(cx - 5*SCALE*(i+1), cy - 3*SCALE);
+        ctx.lineTo(cx + 2*SCALE*i, cy + 1*SCALE);
+        ctx.lineTo(cx + 6*SCALE*(i+1), cy + 4*SCALE);
+        ctx.stroke();
+      }
+    }
   }
 }
 
@@ -287,60 +466,94 @@ function updatePaddle(dt) {
 }
 
 // ---- Ball physics ----
-function updateBall(dt) {
-  ball.x += ball.vx * dt * 60;
-  ball.y += ball.vy * dt * 60;
+function updateBalls(dt) {
+  const deadBalls = [];
+  for (let bi = 0; bi < balls.length; bi++) {
+    const ball = balls[bi];
+    ball.x += ball.vx * dt * 60;
+    ball.y += ball.vy * dt * 60;
 
-  // Wall collisions
-  if (ball.x - ball.r < 0) { ball.x = ball.r; ball.vx = Math.abs(ball.vx); }
-  if (ball.x + ball.r > W) { ball.x = W - ball.r; ball.vx = -Math.abs(ball.vx); }
-  if (ball.y - ball.r < 0) { ball.y = ball.r; ball.vy = Math.abs(ball.vy); }
+    // Wall collisions
+    if (ball.x - ball.r < 0) { ball.x = ball.r; ball.vx = Math.abs(ball.vx); }
+    if (ball.x + ball.r > W) { ball.x = W - ball.r; ball.vx = -Math.abs(ball.vx); }
+    if (ball.y - ball.r < 0) { ball.y = ball.r; ball.vy = Math.abs(ball.vy); }
 
-  // Bottom (lost life)
-  if (ball.y - ball.r > H) {
+    // Bottom
+    if (ball.y - ball.r > H) {
+      deadBalls.push(bi);
+      continue;
+    }
+
+    // Paddle collision
+    if (
+      ball.y + ball.r >= paddleY &&
+      ball.y - ball.r <= paddleY + paddleH &&
+      ball.x >= paddleX - ball.r &&
+      ball.x <= paddleX + paddleW + ball.r &&
+      ball.vy > 0
+    ) {
+      const hit = (ball.x - paddleX) / paddleW;
+      const angle = (hit - 0.5) * 140 * Math.PI / 180;
+      const speed = Math.hypot(ball.vx, ball.vy);
+      ball.vx = speed * Math.sin(angle);
+      ball.vy = -Math.abs(speed * Math.cos(angle));
+      ball.y = paddleY - ball.r - 1;
+      comboCount = 0;
+    }
+
+    // Block collision
+    for (const b of blocks) {
+      if (!b.alive) continue;
+      const bx2 = b.x + b.w, by2 = b.y + b.h;
+      const nearX = Math.max(b.x, Math.min(ball.x, bx2));
+      const nearY = Math.max(b.y, Math.min(ball.y, by2));
+      const dx = ball.x - nearX, dy = ball.y - nearY;
+      if (dx * dx + dy * dy < ball.r * ball.r) {
+        b.hp--;
+        if (b.hp <= 0) {
+          b.alive = false;
+          comboCount++;
+          score += 10 * level * Math.min(comboCount, 5);
+          scoreEl.textContent = score;
+          spawnParticles(b.x + b.w/2, b.y + b.h/2, b.baseColor, 12);
+          spawnItem(b.x + b.w/2, b.y + b.h/2);
+          // Ball acceleration (cap at 2x base speed)
+          const currentSpeed = Math.hypot(ball.vx, ball.vy);
+          const maxSpeed = baseSpeed * 2;
+          if (currentSpeed < maxSpeed) {
+            const boost = 1.02;
+            ball.vx *= boost;
+            ball.vy *= boost;
+          }
+        } else {
+          spawnParticles(b.x + b.w/2, b.y + b.h/2, '#fff', 4);
+          score += 5 * level;
+          scoreEl.textContent = score;
+        }
+        const overlapX = Math.min(Math.abs(ball.x - b.x), Math.abs(ball.x - bx2));
+        const overlapY = Math.min(Math.abs(ball.y - b.y), Math.abs(ball.y - by2));
+        if (overlapX < overlapY) ball.vx *= -1;
+        else ball.vy *= -1;
+        break;
+      }
+    }
+  }
+
+  // Remove dead balls (reverse order)
+  for (let i = deadBalls.length - 1; i >= 0; i--) {
+    balls.splice(deadBalls[i], 1);
+  }
+
+  // All balls lost
+  if (balls.length === 0) {
     life--;
     lifeEl.textContent = life;
     if (life <= 0) {
       gameOver();
     } else {
-      resetBall();
-    }
-    return;
-  }
-
-  // Paddle collision
-  if (
-    ball.y + ball.r >= paddleY &&
-    ball.y - ball.r <= paddleY + paddleH &&
-    ball.x >= paddleX - ball.r &&
-    ball.x <= paddleX + paddleW + ball.r &&
-    ball.vy > 0
-  ) {
-    const hit = (ball.x - paddleX) / paddleW; // 0..1
-    const angle = (hit - 0.5) * 140 * Math.PI / 180; // -70 to +70 deg
-    const speed = Math.hypot(ball.vx, ball.vy);
-    ball.vx = speed * Math.sin(angle);
-    ball.vy = -Math.abs(speed * Math.cos(angle));
-    ball.y = paddleY - ball.r - 1;
-  }
-
-  // Block collision
-  for (const b of blocks) {
-    if (!b.alive) continue;
-    const bx2 = b.x + b.w, by2 = b.y + b.h;
-    const nearX = Math.max(b.x, Math.min(ball.x, bx2));
-    const nearY = Math.max(b.y, Math.min(ball.y, by2));
-    const dx = ball.x - nearX, dy = ball.y - nearY;
-    if (dx * dx + dy * dy < ball.r * ball.r) {
-      b.alive = false;
-      score += 10 * level;
-      scoreEl.textContent = score;
-      // determine bounce direction
-      const overlapX = Math.min(Math.abs(ball.x - b.x), Math.abs(ball.x - bx2));
-      const overlapY = Math.min(Math.abs(ball.y - b.y), Math.abs(ball.y - by2));
-      if (overlapX < overlapY) ball.vx *= -1;
-      else ball.vy *= -1;
-      break;
+      balls = [createBall()];
+      paddleW = 100 * SCALE;
+      comboCount = 0;
     }
   }
 
@@ -348,14 +561,6 @@ function updateBall(dt) {
   if (blocks.every(b => !b.alive)) {
     gameWin();
   }
-}
-
-function resetBall() {
-  ball.x = W / 2;
-  ball.y = paddleY - 20 * SCALE;
-  const speed = (4 + level * 0.5) * SCALE;
-  ball.vx = speed * (Math.random() < 0.5 ? 1 : -1);
-  ball.vy = -speed;
 }
 
 function gameOver() {
@@ -388,16 +593,18 @@ function loop(ts = 0) {
   if (state !== 'playing') return;
 
   updatePaddle(dt);
-  updateBall(dt);
+  updateBalls(dt);
+  updateItems(dt);
+  updateParticles(dt);
 
   drawBackground();
   drawBlocks();
+  drawItems();
   drawPaddle();
-  drawBall();
+  drawBalls();
+  drawParticles();
 
-  // HUD
   levelEl.textContent = level;
-
   animId = requestAnimationFrame(loop);
 }
 
@@ -426,11 +633,16 @@ window.addEventListener('resize', () => {
     const oldW = W, oldH = H;
     updateScale();
     const sx = W / oldW, sy = H / oldH;
-    paddleX *= sx; paddleY = H - 40 * SCALE; paddleW = 100 * SCALE; paddleH = 12 * SCALE;
-    ball.x *= sx; ball.y *= sy; ball.r = 7 * SCALE;
-    ball.vx *= sx; ball.vy *= sy;
+    paddleX *= sx; paddleY = H - 40 * SCALE; paddleW *= sx; paddleH = 12 * SCALE;
+    for (const b of balls) {
+      b.x *= sx; b.y *= sy; b.r = 7 * SCALE;
+      b.vx *= sx; b.vy *= sy;
+    }
     for (const b of blocks) {
       b.x *= sx; b.y *= sy; b.w *= sx; b.h *= sy;
+    }
+    for (const it of items) {
+      it.x *= sx; it.y *= sy;
     }
   } else {
     updateScale();
@@ -448,7 +660,6 @@ canvas.addEventListener('touchstart', e => {
 }, { passive: false });
 
 updateScale();
-// Initial draw
 drawBackground();
 </script>
 </body>
