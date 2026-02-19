@@ -99,7 +99,7 @@
       <button id="startBtn">START GAME</button>
     </div>
   </div>
-  <div id="controls">PC: ← → キー or マウス移動 &nbsp;|&nbsp; スマホ: タッチ操作</div>
+  <div id="controls">PC: ← → キー or マウス移動 &nbsp;|&nbsp; スマホ: タッチ操作 &nbsp;|&nbsp; P / Esc: ポーズ</div>
 
 <script>
 const canvas = document.getElementById('c');
@@ -1058,14 +1058,14 @@ function startCinematic(type, itemX) {
     }
     case 'tsunami': {
       cinematic.duration = 2.0;
-      // Delete bottom 4 rows of alive blocks
+      // Delete bottom 4 rows from the lowest alive block upward
       const rowHeight = 18 * SCALE;
       const deleteRows = 4;
-      // Find the lowest alive block Y
       let maxY = 0;
       for (const b of blocks) { if (b.alive && b.y + b.h > maxY) maxY = b.y + b.h; }
       cinematic.data.cutoff = maxY - deleteRows * rowHeight;
-      cinematic.data.waveY = H + 20 * SCALE;
+      cinematic.data.waveStart = maxY + 10 * SCALE; // start just below lowest block
+      cinematic.data.waveY = cinematic.data.waveStart;
       cinematic.data.processed = new Set();
       break;
     }
@@ -1221,9 +1221,9 @@ function updateCinematic(dt) {
     case 'tsunami': {
       const d = cinematic.data;
       if (t > 0.3 && t < 1.5) {
-        // Wave rises from bottom to cutoff line
+        // Wave rises from bottom of blocks to cutoff (4 rows up)
         const progress = (t - 0.3) / 1.2;
-        d.waveY = H + 20 * SCALE - (H + 20 * SCALE - d.cutoff) * Math.min(1, progress);
+        d.waveY = d.waveStart - (d.waveStart - d.cutoff) * Math.min(1, progress);
         const wy = d.waveY;
         for (const b of blocks) {
           if (!b.alive || d.processed.has(b)) continue;
@@ -1615,6 +1615,23 @@ function drawCinematic() {
   }
 }
 
+// ---- Pause ----
+function togglePause() {
+  if (state === 'playing') {
+    state = 'paused';
+    overlay.classList.remove('hidden');
+    overlayTitle.textContent = 'PAUSED';
+    overlayTitle.style.color = '#4af';
+    overlayMsg.innerHTML = 'P / Esc で再開';
+    startBtn.textContent = 'RESUME';
+  } else if (state === 'paused') {
+    state = 'playing';
+    overlay.classList.add('hidden');
+    lastTime = performance.now();
+    loop();
+  }
+}
+
 // ---- Main loop ----
 let lastTime = 0;
 function loop(ts = 0) {
@@ -1725,14 +1742,22 @@ window.addEventListener('resize', () => {
   }
 });
 
-// ---- Start ----
-startBtn.addEventListener('click', startGame);
+// ---- Start / Pause ----
+startBtn.addEventListener('click', () => {
+  if (state === 'paused') togglePause();
+  else startGame();
+});
 document.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && state !== 'playing') startGame();
+  if ((e.key === 'p' || e.key === 'P' || e.key === 'Escape') && (state === 'playing' || state === 'paused')) {
+    e.preventDefault();
+    togglePause();
+    return;
+  }
+  if (e.key === 'Enter' && (state !== 'playing' && state !== 'paused')) startGame();
 });
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
-  if (state !== 'playing') startGame();
+  if (state !== 'playing' && state !== 'paused') startGame();
 }, { passive: false });
 
 updateScale();
