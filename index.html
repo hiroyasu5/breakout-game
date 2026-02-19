@@ -301,6 +301,10 @@ const ITEM_TYPES = [
 const ITEM_TOTAL_WEIGHT = ITEM_TYPES.reduce((s, t) => s + t.weight, 0);
 const ITEM_DROP_CHANCE = 0.40;
 
+// Helper items only (no shrink) for auto-drop
+const HELP_ITEM_TYPES = ITEM_TYPES.filter(t => t.type !== 'shrink');
+const HELP_ITEM_WEIGHT = HELP_ITEM_TYPES.reduce((s, t) => s + t.weight, 0);
+
 function pickRandomItem() {
   let r = Math.random() * ITEM_TOTAL_WEIGHT;
   for (const it of ITEM_TYPES) {
@@ -308,6 +312,15 @@ function pickRandomItem() {
     if (r <= 0) return it;
   }
   return ITEM_TYPES[0];
+}
+
+function pickHelpItem() {
+  let r = Math.random() * HELP_ITEM_WEIGHT;
+  for (const it of HELP_ITEM_TYPES) {
+    r -= it.weight;
+    if (r <= 0) return it;
+  }
+  return HELP_ITEM_TYPES[0];
 }
 
 // ---- Game state ----
@@ -329,6 +342,10 @@ let fireMode = 0;
 let speedBoost = 0;
 let levelBanner = 0;
 let flashAlpha = 0;
+let autoItemTimer = 0;
+const AUTO_ITEM_INTERVAL_MIN = 4;  // seconds
+const AUTO_ITEM_INTERVAL_MAX = 8;
+let nextAutoItem = 5; // first drop after 5 sec
 
 function getBlockColor(baseColor, hp, maxHP) {
   const factor = 0.35 + 0.65 * (hp / maxHP);
@@ -355,6 +372,8 @@ function initLevel() {
   speedBoost = 0;
   levelBanner = 2.5; // Show banner for 2.5 seconds
   flashAlpha = 0;
+  autoItemTimer = 0;
+  nextAutoItem = 4 + Math.random() * 3; // first auto-drop 4-7 sec into stage
 }
 
 function createBall(x, y, vx, vy, isMain) {
@@ -915,6 +934,25 @@ function loop(ts = 0) {
   updateBalls(dt);
   updateItems(dt);
   updateParticles(dt);
+
+  // Auto-drop helper items from the sky
+  autoItemTimer += dt;
+  if (autoItemTimer >= nextAutoItem) {
+    autoItemTimer = 0;
+    // Drop faster when player has fewer balls (more help needed)
+    const helpUrgency = balls.length <= 1 ? 0.6 : 1.0;
+    nextAutoItem = (AUTO_ITEM_INTERVAL_MIN + Math.random() * (AUTO_ITEM_INTERVAL_MAX - AUTO_ITEM_INTERVAL_MIN)) * helpUrgency;
+    const itemDef = pickHelpItem();
+    const dropX = 30 * SCALE + Math.random() * (W - 60 * SCALE);
+    items.push({
+      x: dropX,
+      y: -10 * SCALE,
+      vy: 1.8 * SCALE,
+      size: 18 * SCALE,
+      ...itemDef,
+      time: 0,
+    });
+  }
 
   drawBackground();
   drawBlocks();
