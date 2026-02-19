@@ -290,13 +290,13 @@ function buildStage(level) {
 
 // ---- Item config ----
 const ITEM_TYPES = [
-  { type: 'wide',  label: 'W', color: '#4af',  weight: 4 },
-  { type: 'shrink',label: 'S', color: '#f44',  weight: 2 },
-  { type: 'life',  label: 'L', color: '#f4f',  weight: 2 },
-  { type: 'multi', label: 'M', color: '#ff0',  weight: 3 },
-  { type: 'speed', label: '!', color: '#0ff',  weight: 3 },
-  { type: 'fire',  label: 'F', color: '#f80',  weight: 2 },
-  { type: 'bomb',  label: 'B', color: '#f00',  weight: 2 },
+  { type: 'wide',  icon: '↔',  color: '#4af',  weight: 4 },
+  { type: 'shrink',icon: '→←', color: '#f44',  weight: 2 },
+  { type: 'life',  icon: '♥',  color: '#f4f',  weight: 2 },
+  { type: 'multi', icon: '✦',  color: '#ff0',  weight: 3 },
+  { type: 'speed', icon: '⚡', color: '#0ff',  weight: 3 },
+  { type: 'fire',  icon: '🔥', color: '#f80',  weight: 2 },
+  { type: 'bomb',  icon: '💣', color: '#f00',  weight: 2 },
 ];
 const ITEM_TOTAL_WEIGHT = ITEM_TYPES.reduce((s, t) => s + t.weight, 0);
 const ITEM_DROP_CHANCE = 0.40;
@@ -537,20 +537,29 @@ function applyItem(item) {
 
 function drawItems() {
   for (const it of items) {
-    const pulse = 1 + Math.sin(it.time * 6) * 0.1;
+    const pulse = 1 + Math.sin(it.time * 6) * 0.15;
     const s = it.size * pulse;
+    // Glowing background circle
     ctx.fillStyle = it.color;
     ctx.shadowColor = it.color;
-    ctx.shadowBlur = 12 * SCALE;
+    ctx.shadowBlur = 14 * SCALE;
+    ctx.globalAlpha = 0.7;
     ctx.beginPath();
-    ctx.arc(it.x, it.y, s / 2, 0, Math.PI * 2);
+    ctx.arc(it.x, it.y, s / 2 + 2 * SCALE, 0, Math.PI * 2);
     ctx.fill();
+    ctx.globalAlpha = 1;
+    // Inner circle
+    ctx.fillStyle = '#111';
     ctx.shadowBlur = 0;
-    ctx.fillStyle = '#000';
-    ctx.font = `bold ${Math.floor(12 * SCALE)}px Courier New`;
+    ctx.beginPath();
+    ctx.arc(it.x, it.y, s / 2 - 2 * SCALE, 0, Math.PI * 2);
+    ctx.fill();
+    // Icon
+    ctx.font = `${Math.floor(14 * SCALE)}px serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(it.label, it.x, it.y);
+    ctx.fillStyle = it.color;
+    ctx.fillText(it.icon, it.x, it.y + 1 * SCALE);
   }
 }
 
@@ -587,32 +596,57 @@ function drawPaddle() {
 
 function drawBalls() {
   for (const b of balls) {
-    if (fireMode > 0) {
-      ctx.shadowColor = '#f80';
-      ctx.shadowBlur = 20 * SCALE;
-      ctx.fillStyle = '#ff4';
-      spawnParticles(b.x, b.y, '#f80', 1, 0.5);
-    } else if (b.isMain) {
-      // Main ball: golden with strong glow
-      ctx.shadowColor = speedBoost > 0 ? '#0ff' : '#ff0';
-      ctx.shadowBlur = 18 * SCALE;
-      ctx.fillStyle = speedBoost > 0 ? '#0ff' : '#ffe040';
-      // Outer ring
+    const isFire = fireMode > 0;
+
+    if (b.isMain) {
+      // Main ball: ALWAYS distinguishable — larger, golden core + outer ring
+      if (isFire) {
+        // Fire + Main: red-gold with fire trail
+        ctx.shadowColor = '#f40';
+        ctx.shadowBlur = 22 * SCALE;
+        ctx.fillStyle = '#ff2';
+        spawnParticles(b.x, b.y, '#f80', 2, 0.6);
+      } else if (speedBoost > 0) {
+        ctx.shadowColor = '#0ff';
+        ctx.shadowBlur = 20 * SCALE;
+        ctx.fillStyle = '#0ff';
+        spawnParticles(b.x, b.y, '#0ff', 1, 0.4);
+      } else {
+        ctx.shadowColor = '#ff0';
+        ctx.shadowBlur = 18 * SCALE;
+        ctx.fillStyle = '#ffe040';
+      }
+      // Draw main ball slightly larger
       ctx.beginPath();
-      ctx.arc(b.x, b.y, b.r + 2 * SCALE, 0, Math.PI * 2);
-      ctx.strokeStyle = speedBoost > 0 ? 'rgba(0,255,255,0.5)' : 'rgba(255,224,64,0.5)';
-      ctx.lineWidth = 2 * SCALE;
+      ctx.arc(b.x, b.y, b.r * 1.15, 0, Math.PI * 2);
+      ctx.fill();
+      // Outer ring (always visible for main ball)
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r * 1.15 + 3 * SCALE, 0, Math.PI * 2);
+      ctx.strokeStyle = isFire ? 'rgba(255,68,0,0.6)' : speedBoost > 0 ? 'rgba(0,255,255,0.6)' : 'rgba(255,224,64,0.6)';
+      ctx.lineWidth = 2.5 * SCALE;
       ctx.stroke();
-      if (speedBoost > 0) spawnParticles(b.x, b.y, '#0ff', 1, 0.4);
+      // Inner bright dot
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(b.x - 2*SCALE, b.y - 2*SCALE, b.r * 0.3, 0, Math.PI * 2);
+      ctx.fill();
     } else {
-      // Sub balls: white, smaller glow
-      ctx.shadowColor = '#aaf';
-      ctx.shadowBlur = 10 * SCALE;
-      ctx.fillStyle = '#ccf';
+      // Sub balls: smaller, dimmer, clearly different
+      if (isFire) {
+        ctx.shadowColor = '#f80';
+        ctx.shadowBlur = 12 * SCALE;
+        ctx.fillStyle = '#fa4';
+        spawnParticles(b.x, b.y, '#f80', 1, 0.3);
+      } else {
+        ctx.shadowColor = '#88f';
+        ctx.shadowBlur = 8 * SCALE;
+        ctx.fillStyle = '#aaf';
+      }
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r * 0.85, 0, Math.PI * 2);
+      ctx.fill();
     }
-    ctx.beginPath();
-    ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-    ctx.fill();
     ctx.shadowBlur = 0;
   }
 }
