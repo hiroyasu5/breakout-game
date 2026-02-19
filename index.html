@@ -1057,11 +1057,17 @@ function startCinematic(type, itemX) {
       cinematic.data.hitIndex = -1;
       break;
     }
-    case 'tsunami':
-      cinematic.duration = 2.8;
-      cinematic.data.waveY = H + 20 * SCALE;
+    case 'tsunami': {
+      cinematic.duration = 2.0;
+      // Wave only travels 1/3 of screen height from bottom of block area
+      const blockBottom = 30 * SCALE + 28 * 18 * SCALE; // offsetY + ROWS * bh
+      const travelDist = H * 0.33;
+      cinematic.data.waveStart = Math.min(blockBottom, H - 60 * SCALE);
+      cinematic.data.waveStop = cinematic.data.waveStart - travelDist;
+      cinematic.data.waveY = cinematic.data.waveStart;
       cinematic.data.processed = new Set();
       break;
+    }
     case 'freeze':
       cinematic.duration = 3.2;
       cinematic.data.shattered = false;
@@ -1196,10 +1202,12 @@ function updateCinematic(dt) {
       break;
     }
     case 'tsunami': {
-      if (t > 0.3 && t < 2.3) {
-        const waveHeight = 80 * SCALE; // ~4 rows tall
-        cinematic.data.waveY = H + 20 * SCALE - ((t - 0.3) / 2.0) * (H + 80 * SCALE);
-        const wy = cinematic.data.waveY;
+      if (t > 0.3 && t < 1.7) {
+        const waveHeight = 80 * SCALE;
+        const d = cinematic.data;
+        const progress = (t - 0.3) / 1.4;
+        d.waveY = d.waveStart - (d.waveStart - d.waveStop) * progress;
+        const wy = d.waveY;
         for (const b of blocks) {
           if (!b.alive || cinematic.data.processed.has(b)) continue;
           const by = b.y + b.h / 2;
@@ -1464,7 +1472,7 @@ function drawCinematic() {
       break;
     }
     case 'tsunami': {
-      if (t > 0.3 && t < 2.3) {
+      if (t > 0.3 && t < 1.7) {
         const wy = cinematic.data.waveY;
         // Wave body
         const grad = ctx.createLinearGradient(0, wy - 50 * SCALE, 0, wy + 30 * SCALE);
