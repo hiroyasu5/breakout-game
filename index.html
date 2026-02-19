@@ -323,6 +323,15 @@ function pickHelpItem() {
   return HELP_ITEM_TYPES[0];
 }
 
+// ---- Special (rare) items ----
+const SPECIAL_ITEM_TYPES = [
+  { type: 'dragon',    icon: '🐉', color: '#f80', label: 'DRAGON BREATH', special: true },
+  { type: 'meteor',    icon: '☄️', color: '#f44', label: 'METEOR STORM',  special: true },
+  { type: 'starburst', icon: '🌟', color: '#ff0', label: 'STAR BURST',    special: true },
+];
+const SPECIAL_DROP_CHANCE = 0.03;   // 3% from block drops
+const SPECIAL_AUTO_CHANCE = 0.08;   // 8% of auto-drops
+
 // ---- Game state ----
 let state = 'idle';
 let score = 0, life = 3, level = 1;
@@ -346,6 +355,7 @@ let autoItemTimer = 0;
 const AUTO_ITEM_INTERVAL_MIN = 4;  // seconds
 const AUTO_ITEM_INTERVAL_MAX = 8;
 let nextAutoItem = 5; // first drop after 5 sec
+let cinematic = null; // { type, timer, duration, phase, data }
 
 function getBlockColor(baseColor, hp, maxHP) {
   const factor = 0.35 + 0.65 * (hp / maxHP);
@@ -374,6 +384,7 @@ function initLevel() {
   flashAlpha = 0;
   autoItemTimer = 0;
   nextAutoItem = 4 + Math.random() * 3; // first auto-drop 4-7 sec into stage
+  cinematic = null;
 }
 
 function createBall(x, y, vx, vy, isMain) {
@@ -475,11 +486,17 @@ function drawParticles() {
 // ---- Items ----
 function spawnItem(x, y) {
   if (Math.random() > ITEM_DROP_CHANCE) return;
-  const itemDef = pickRandomItem();
+  let itemDef;
+  if (Math.random() < SPECIAL_DROP_CHANCE) {
+    itemDef = SPECIAL_ITEM_TYPES[Math.floor(Math.random() * SPECIAL_ITEM_TYPES.length)];
+  } else {
+    itemDef = pickRandomItem();
+  }
+  const isSpecial = !!itemDef.special;
   items.push({
     x, y,
-    vy: 2 * SCALE,
-    size: 18 * SCALE,
+    vy: (isSpecial ? 1.4 : 2) * SCALE,
+    size: (isSpecial ? 30 : 18) * SCALE,
     ...itemDef,
     time: 0,
   });
@@ -534,7 +551,7 @@ function applyItem(item) {
     case 'fire':
       fireMode = 5; // 5 seconds of fire mode (piercing ball)
       break;
-    case 'bomb':
+    case 'bomb': {
       // Destroy all blocks in radius
       const bx = item.x, by = item.y;
       const radius = 80 * SCALE;
@@ -551,35 +568,83 @@ function applyItem(item) {
       spawnExplosion(bx, by);
       scoreEl.textContent = score;
       break;
+    }
+    case 'dragon':
+    case 'meteor':
+    case 'starburst':
+      if (!cinematic) startCinematic(item.type);
+      break;
   }
 }
 
 function drawItems() {
   for (const it of items) {
-    const pulse = 1 + Math.sin(it.time * 6) * 0.15;
-    const s = it.size * pulse;
-    // Glowing background circle
-    ctx.fillStyle = it.color;
-    ctx.shadowColor = it.color;
-    ctx.shadowBlur = 14 * SCALE;
-    ctx.globalAlpha = 0.7;
-    ctx.beginPath();
-    ctx.arc(it.x, it.y, s / 2 + 2 * SCALE, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    // Inner circle
-    ctx.fillStyle = '#111';
-    ctx.shadowBlur = 0;
-    ctx.beginPath();
-    ctx.arc(it.x, it.y, s / 2 - 2 * SCALE, 0, Math.PI * 2);
-    ctx.fill();
-    // Icon
-    ctx.font = `${Math.floor(14 * SCALE)}px serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = it.color;
-    ctx.fillText(it.icon, it.x, it.y + 1 * SCALE);
+    if (it.special) {
+      // ---- Special item: larger, rainbow glow, dramatic ----
+      const pulse = 1 + Math.sin(it.time * 4) * 0.2;
+      const s = it.size * pulse;
+      const hue = (it.time * 90) % 360;
+      // Outer rainbow ring
+      ctx.strokeStyle = `hsl(${hue}, 100%, 65%)`;
+      ctx.shadowColor = `hsl(${hue}, 100%, 65%)`;
+      ctx.shadowBlur = 24 * SCALE;
+      ctx.lineWidth = 3 * SCALE;
+      ctx.beginPath();
+      ctx.arc(it.x, it.y, s / 2 + 5 * SCALE, 0, Math.PI * 2);
+      ctx.stroke();
+      // Glowing background
+      ctx.fillStyle = it.color;
+      ctx.shadowColor = it.color;
+      ctx.shadowBlur = 20 * SCALE;
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      ctx.arc(it.x, it.y, s / 2 + 2 * SCALE, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      // Inner dark circle
+      ctx.fillStyle = '#0a0a1a';
+      ctx.shadowBlur = 0;
+      ctx.beginPath();
+      ctx.arc(it.x, it.y, s / 2 - 3 * SCALE, 0, Math.PI * 2);
+      ctx.fill();
+      // Icon (larger)
+      ctx.font = `${Math.floor(20 * SCALE)}px serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = it.color;
+      ctx.fillText(it.icon, it.x, it.y + 1 * SCALE);
+      // Sparkle particles while falling
+      if (Math.random() < 0.3) {
+        spawnParticles(it.x + (Math.random()-0.5)*s, it.y + (Math.random()-0.5)*s, it.color, 1, 0.4);
+      }
+    } else {
+      // ---- Normal item ----
+      const pulse = 1 + Math.sin(it.time * 6) * 0.15;
+      const s = it.size * pulse;
+      // Glowing background circle
+      ctx.fillStyle = it.color;
+      ctx.shadowColor = it.color;
+      ctx.shadowBlur = 14 * SCALE;
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      ctx.arc(it.x, it.y, s / 2 + 2 * SCALE, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      // Inner circle
+      ctx.fillStyle = '#111';
+      ctx.shadowBlur = 0;
+      ctx.beginPath();
+      ctx.arc(it.x, it.y, s / 2 - 2 * SCALE, 0, Math.PI * 2);
+      ctx.fill();
+      // Icon
+      ctx.font = `${Math.floor(14 * SCALE)}px serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = it.color;
+      ctx.fillText(it.icon, it.x, it.y + 1 * SCALE);
+    }
   }
+  ctx.shadowBlur = 0;
 }
 
 // ---- Draw ----
@@ -913,6 +978,205 @@ function gameWin() {
   }
 }
 
+// ---- Cinematic (special item) system ----
+function startCinematic(type) {
+  cinematic = { type, timer: 0, data: {} };
+  switch (type) {
+    case 'dragon':
+      cinematic.duration = 3.0;
+      cinematic.data.sweepX = -50 * SCALE;
+      cinematic.data.processed = new Set();
+      break;
+    case 'meteor': {
+      cinematic.duration = 3.5;
+      const alive = blocks.filter(b => b.alive);
+      const count = Math.min(alive.length, 10 + Math.floor(Math.random() * 5));
+      const shuffled = [...alive].sort(() => Math.random() - 0.5);
+      cinematic.data.meteors = shuffled.slice(0, count).map((b, i) => ({
+        block: b,
+        targetX: b.x + b.w / 2,
+        targetY: b.y + b.h / 2,
+        startX: b.x + b.w / 2 + (Math.random() - 0.5) * 120 * SCALE,
+        startY: -40 * SCALE,
+        delay: 0.4 + i * 0.18,
+        hit: false,
+        currentX: 0, currentY: 0,
+      }));
+      break;
+    }
+    case 'starburst':
+      cinematic.duration = 1.8;
+      cinematic.data.spawned = false;
+      break;
+  }
+}
+
+function updateCinematic(dt) {
+  cinematic.timer += dt;
+  updateParticles(dt);
+  const t = cinematic.timer;
+
+  switch (cinematic.type) {
+    case 'dragon': {
+      if (t > 0.5 && t < 2.5) {
+        cinematic.data.sweepX = ((t - 0.5) / 2.0) * (W + 100 * SCALE) - 50 * SCALE;
+        const sx = cinematic.data.sweepX;
+        for (const b of blocks) {
+          if (!b.alive || cinematic.data.processed.has(b)) continue;
+          if ((b.x + b.w / 2) <= sx) {
+            cinematic.data.processed.add(b);
+            b.hp--;
+            score += 5 * level;
+            spawnParticles(b.x + b.w/2, b.y + b.h/2, '#f80', 10, 1);
+            addShake(1);
+            if (b.hp <= 0) {
+              b.alive = false;
+              score += 15 * level;
+              spawnParticles(b.x + b.w/2, b.y + b.h/2, b.baseColor, 18, 1.5);
+              addShake(3);
+            }
+          }
+        }
+        scoreEl.textContent = score;
+      }
+      break;
+    }
+    case 'meteor': {
+      for (const m of cinematic.data.meteors) {
+        if (m.hit || t < m.delay) continue;
+        const progress = Math.min(1, (t - m.delay) / 0.25);
+        m.currentX = m.startX + (m.targetX - m.startX) * progress;
+        m.currentY = m.startY + (m.targetY - m.startY) * Math.pow(progress, 0.7);
+        if (progress < 1) {
+          spawnParticles(m.currentX, m.currentY, '#f80', 2, 0.6);
+        }
+        if (progress >= 1 && !m.hit) {
+          m.hit = true;
+          if (m.block.alive) {
+            m.block.alive = false;
+            m.block.hp = 0;
+            score += 20 * level;
+            spawnExplosion(m.block.x + m.block.w/2, m.block.y + m.block.h/2);
+          }
+          scoreEl.textContent = score;
+        }
+      }
+      break;
+    }
+    case 'starburst': {
+      if (t > 0.4 && !cinematic.data.spawned) {
+        cinematic.data.spawned = true;
+        const newBalls = [];
+        for (const b of balls) {
+          const speed = Math.hypot(b.vx, b.vy) || baseSpeed;
+          for (let i = 0; i < 7; i++) {
+            const angle = (i / 7) * Math.PI * 2 + Math.random() * 0.3;
+            newBalls.push(createBall(b.x, b.y, speed * Math.cos(angle), speed * Math.sin(angle)));
+          }
+          spawnParticles(b.x, b.y, '#ff0', 25, 2);
+        }
+        balls.push(...newBalls);
+        flashAlpha = 0.6;
+        addShake(12);
+      }
+      break;
+    }
+  }
+
+  if (cinematic.timer >= cinematic.duration) {
+    cinematic = null;
+    if (blocks.every(b => !b.alive)) gameWin();
+  }
+}
+
+function drawCinematic() {
+  if (!cinematic) return;
+  const t = cinematic.timer;
+
+  // Screen dim
+  const dimAlpha = Math.min(0.35, t * 1.5);
+  ctx.globalAlpha = dimAlpha;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 1;
+
+  // Label
+  let label, color;
+  switch (cinematic.type) {
+    case 'dragon':    label = '🐉 DRAGON BREATH!'; color = '#f80'; break;
+    case 'meteor':    label = '☄️ METEOR STORM!';  color = '#f44'; break;
+    case 'starburst': label = '🌟 STAR BURST!';    color = '#ff0'; break;
+  }
+  const fadeIn = Math.min(1, t / 0.3);
+  const fadeOut = Math.min(1, Math.max(0, (cinematic.duration - t) / 0.3));
+  ctx.globalAlpha = fadeIn * fadeOut;
+  ctx.fillStyle = color;
+  ctx.font = `bold ${Math.floor(26 * SCALE)}px Courier New`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 25 * SCALE;
+  ctx.fillText(label, W / 2, H * 0.22);
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+
+  // Type-specific effects
+  switch (cinematic.type) {
+    case 'dragon': {
+      if (t > 0.5 && t < 2.5) {
+        const sx = cinematic.data.sweepX;
+        // Fire sweep column
+        const grad = ctx.createLinearGradient(sx - 40 * SCALE, 0, sx + 40 * SCALE, 0);
+        grad.addColorStop(0, 'rgba(255,136,0,0)');
+        grad.addColorStop(0.3, 'rgba(255,68,0,0.6)');
+        grad.addColorStop(0.5, 'rgba(255,255,100,0.9)');
+        grad.addColorStop(0.7, 'rgba(255,68,0,0.6)');
+        grad.addColorStop(1, 'rgba(255,136,0,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(sx - 40 * SCALE, 0, 80 * SCALE, H);
+      }
+      break;
+    }
+    case 'meteor': {
+      for (const m of cinematic.data.meteors) {
+        if (m.hit || t < m.delay) continue;
+        // Meteor body
+        ctx.fillStyle = '#ff4400';
+        ctx.shadowColor = '#ff8800';
+        ctx.shadowBlur = 18 * SCALE;
+        ctx.beginPath();
+        ctx.arc(m.currentX, m.currentY, 10 * SCALE, 0, Math.PI * 2);
+        ctx.fill();
+        // Bright core
+        ctx.fillStyle = '#ffcc00';
+        ctx.beginPath();
+        ctx.arc(m.currentX, m.currentY, 5 * SCALE, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+      break;
+    }
+    case 'starburst': {
+      if (t > 0.2 && t < 0.5) {
+        // Pre-burst glow on each ball
+        const glowAlpha = (t - 0.2) / 0.3;
+        for (const b of balls) {
+          ctx.globalAlpha = glowAlpha * 0.6;
+          ctx.fillStyle = '#ff0';
+          ctx.shadowColor = '#ff0';
+          ctx.shadowBlur = 30 * SCALE;
+          ctx.beginPath();
+          ctx.arc(b.x, b.y, b.r * 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        ctx.shadowBlur = 0;
+      }
+      break;
+    }
+  }
+}
+
 // ---- Main loop ----
 let lastTime = 0;
 function loop(ts = 0) {
@@ -930,39 +1194,58 @@ function loop(ts = 0) {
     if (screenShake < 0.5) screenShake = 0;
   }
 
-  updatePaddle(dt);
-  updateBalls(dt);
-  updateItems(dt);
-  updateParticles(dt);
+  if (cinematic) {
+    // ---- Cinematic mode: time frozen, only effect plays ----
+    updateCinematic(dt);
+    drawBackground();
+    drawBlocks();
+    drawItems();
+    drawPaddle();
+    drawBalls();
+    drawParticles();
+    drawCinematic();
+    drawFlash(dt);
+  } else {
+    // ---- Normal gameplay ----
+    updatePaddle(dt);
+    updateBalls(dt);
+    updateItems(dt);
+    updateParticles(dt);
 
-  // Auto-drop helper items from the sky
-  autoItemTimer += dt;
-  if (autoItemTimer >= nextAutoItem) {
-    autoItemTimer = 0;
-    // Drop faster when player has fewer balls (more help needed)
-    const helpUrgency = balls.length <= 1 ? 0.6 : 1.0;
-    nextAutoItem = (AUTO_ITEM_INTERVAL_MIN + Math.random() * (AUTO_ITEM_INTERVAL_MAX - AUTO_ITEM_INTERVAL_MIN)) * helpUrgency;
-    const itemDef = pickHelpItem();
-    const dropX = 30 * SCALE + Math.random() * (W - 60 * SCALE);
-    items.push({
-      x: dropX,
-      y: -10 * SCALE,
-      vy: 1.8 * SCALE,
-      size: 18 * SCALE,
-      ...itemDef,
-      time: 0,
-    });
+    // Auto-drop helper items from the sky
+    autoItemTimer += dt;
+    if (autoItemTimer >= nextAutoItem) {
+      autoItemTimer = 0;
+      const helpUrgency = balls.length <= 1 ? 0.6 : 1.0;
+      nextAutoItem = (AUTO_ITEM_INTERVAL_MIN + Math.random() * (AUTO_ITEM_INTERVAL_MAX - AUTO_ITEM_INTERVAL_MIN)) * helpUrgency;
+      let itemDef;
+      if (Math.random() < SPECIAL_AUTO_CHANCE) {
+        itemDef = SPECIAL_ITEM_TYPES[Math.floor(Math.random() * SPECIAL_ITEM_TYPES.length)];
+      } else {
+        itemDef = pickHelpItem();
+      }
+      const isSpecial = !!itemDef.special;
+      const dropX = 30 * SCALE + Math.random() * (W - 60 * SCALE);
+      items.push({
+        x: dropX,
+        y: -10 * SCALE,
+        vy: (isSpecial ? 1.4 : 1.8) * SCALE,
+        size: (isSpecial ? 30 : 18) * SCALE,
+        ...itemDef,
+        time: 0,
+      });
+    }
+
+    drawBackground();
+    drawBlocks();
+    drawItems();
+    drawPaddle();
+    drawBalls();
+    drawParticles();
+    drawCombo();
+    drawLevelBanner(dt);
+    drawFlash(dt);
   }
-
-  drawBackground();
-  drawBlocks();
-  drawItems();
-  drawPaddle();
-  drawBalls();
-  drawParticles();
-  drawCombo();
-  drawLevelBanner(dt);
-  drawFlash(dt);
 
   if (screenShake > 0) ctx.restore();
 
