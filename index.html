@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>ブロック崩し / Breakout</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a1a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Courier New', monospace;
+      color: #fff;
+      overflow: hidden;
+    }
+    h1 {
+      font-size: clamp(1rem, 3vw, 1.5rem);
+      margin-bottom: 8px;
+      color: #4af;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+    }
+    #hud {
+      display: flex;
+      gap: 24px;
+      margin-bottom: 8px;
+      font-size: clamp(0.75rem, 2vw, 1rem);
+      color: #adf;
+    }
+    #hud span { color: #fff; font-weight: bold; }
+    #gameContainer {
+      position: relative;
+      border: 2px solid #4af;
+      box-shadow: 0 0 20px #4af4, 0 0 60px #4af2;
+    }
+    canvas { display: block; }
+    #overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,10,0.85);
+      text-align: center;
+      gap: 16px;
+    }
+    #overlay.hidden { display: none; }
+    #overlayTitle {
+      font-size: clamp(1.5rem, 5vw, 3rem);
+      font-weight: bold;
+      letter-spacing: 4px;
+    }
+    #overlayMsg {
+      font-size: clamp(0.85rem, 2.5vw, 1.2rem);
+      color: #adf;
+      line-height: 1.6;
+    }
+    #startBtn {
+      margin-top: 8px;
+      padding: 12px 32px;
+      font-size: clamp(1rem, 3vw, 1.3rem);
+      font-family: inherit;
+      background: #4af;
+      color: #000;
+      border: none;
+      cursor: pointer;
+      letter-spacing: 2px;
+      font-weight: bold;
+      border-radius: 4px;
+      transition: background 0.2s, transform 0.1s;
+    }
+    #startBtn:hover { background: #6cf; transform: scale(1.05); }
+    #startBtn:active { transform: scale(0.97); }
+    #controls {
+      margin-top: 6px;
+      font-size: clamp(0.65rem, 1.5vw, 0.8rem);
+      color: #678;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <h1>BREAKOUT</h1>
+  <div id="hud">
+    <div>SCORE: <span id="scoreVal">0</span></div>
+    <div>LIFE: <span id="lifeVal">3</span></div>
+    <div>LEVEL: <span id="levelVal">1</span></div>
+  </div>
+  <div id="gameContainer">
+    <canvas id="c"></canvas>
+    <div id="overlay">
+      <div id="overlayTitle" style="color:#4af">BREAKOUT</div>
+      <div id="overlayMsg">矢印キー / マウス / タッチでパドルを操作<br>ブロックを全て壊せ！</div>
+      <button id="startBtn">START GAME</button>
+    </div>
+  </div>
+  <div id="controls">PC: ← → キー or マウス移動 &nbsp;|&nbsp; スマホ: タッチ操作</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const overlayTitle = document.getElementById('overlayTitle');
+const overlayMsg = document.getElementById('overlayMsg');
+const startBtn = document.getElementById('startBtn');
+const scoreEl = document.getElementById('scoreVal');
+const lifeEl = document.getElementById('lifeVal');
+const levelEl = document.getElementById('levelVal');
+
+// ---- Responsive sizing ----
+function getCanvasSize() {
+  const maxW = Math.min(window.innerWidth - 16, 560);
+  const maxH = Math.min(window.innerHeight - 120, 680);
+  const ratio = 560 / 680;
+  let w = maxW;
+  let h = w / ratio;
+  if (h > maxH) { h = maxH; w = h * ratio; }
+  return { w: Math.floor(w), h: Math.floor(h) };
+}
+
+// ---- Game constants (scaled) ----
+let W, H, SCALE;
+function updateScale() {
+  const { w, h } = getCanvasSize();
+  W = w; H = h;
+  SCALE = W / 560;
+  canvas.width = W;
+  canvas.height = H;
+  document.getElementById('gameContainer').style.width = W + 'px';
+  document.getElementById('gameContainer').style.height = H + 'px';
+}
+
+// ---- Block config ----
+const BLOCK_ROWS = 6;
+const BLOCK_COLS = 10;
+const BLOCK_COLORS = [
+  '#ff4444', '#ff4444',
+  '#ff8800', '#ff8800',
+  '#ffcc00', '#ffcc00',
+  '#44ff44', '#44ff44',
+  '#44aaff', '#44aaff',
+  '#aa44ff', '#aa44ff',
+];
+
+// ---- Game state ----
+let state = 'idle'; // idle | playing | lost | won
+let score = 0, life = 3, level = 1;
+let paddleX, paddleW, paddleH, paddleY;
+let ball = {};
+let blocks = [];
+let animId;
+let keys = {};
+let mouseX = null;
+let touchX = null;
+
+function initLevel() {
+  updateScale();
+  const pw = 100 * SCALE;
+  const ph = 12 * SCALE;
+  paddleW = pw;
+  paddleH = ph;
+  paddleY = H - 40 * SCALE;
+  paddleX = W / 2 - pw / 2;
+
+  const bw = (W - 20 * SCALE) / BLOCK_COLS;
+  const bh = 22 * SCALE;
+  const offsetX = 10 * SCALE;
+  const offsetY = 50 * SCALE;
+  blocks = [];
+  for (let r = 0; r < BLOCK_ROWS; r++) {
+    for (let c = 0; c < BLOCK_COLS; c++) {
+      blocks.push({
+        x: offsetX + c * bw,
+        y: offsetY + r * bh,
+        w: bw - 4 * SCALE,
+        h: bh - 4 * SCALE,
+        color: BLOCK_COLORS[r % BLOCK_COLORS.length],
+        alive: true,
+      });
+    }
+  }
+
+  const speed = (4 + level * 0.5) * SCALE;
+  const angle = (Math.random() * 60 + 60) * Math.PI / 180; // 60-120 deg
+  ball = {
+    x: W / 2,
+    y: paddleY - 20 * SCALE,
+    r: 7 * SCALE,
+    vx: speed * Math.cos(angle) * (Math.random() < 0.5 ? 1 : -1),
+    vy: -speed * Math.abs(Math.sin(angle)),
+  };
+}
+
+function startGame() {
+  score = 0; life = 3; level = 1;
+  overlay.classList.add('hidden');
+  state = 'playing';
+  mouseX = null; touchX = null;
+  initLevel();
+  cancelAnimationFrame(animId);
+  loop();
+}
+
+function nextLevel() {
+  level++;
+  levelEl.textContent = level;
+  initLevel();
+}
+
+// ---- Draw ----
+function drawBackground() {
+  ctx.fillStyle = '#0a0a1a';
+  ctx.fillRect(0, 0, W, H);
+  // subtle grid
+  ctx.strokeStyle = 'rgba(68,170,255,0.05)';
+  ctx.lineWidth = 1;
+  const gs = 40 * SCALE;
+  for (let x = 0; x < W; x += gs) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  for (let y = 0; y < H; y += gs) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+}
+
+function drawPaddle() {
+  const grd = ctx.createLinearGradient(paddleX, paddleY, paddleX, paddleY + paddleH);
+  grd.addColorStop(0, '#6cf');
+  grd.addColorStop(1, '#4af');
+  ctx.fillStyle = grd;
+  ctx.shadowColor = '#4af';
+  ctx.shadowBlur = 12 * SCALE;
+  roundRect(ctx, paddleX, paddleY, paddleW, paddleH, 5 * SCALE);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+}
+
+function drawBall() {
+  ctx.shadowColor = '#fff';
+  ctx.shadowBlur = 14 * SCALE;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+}
+
+function drawBlocks() {
+  for (const b of blocks) {
+    if (!b.alive) continue;
+    ctx.shadowColor = b.color;
+    ctx.shadowBlur = 8 * SCALE;
+    ctx.fillStyle = b.color;
+    roundRect(ctx, b.x, b.y, b.w, b.h, 4 * SCALE);
+    ctx.fill();
+    // highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    roundRect(ctx, b.x + 2 * SCALE, b.y + 2 * SCALE, b.w - 4 * SCALE, 5 * SCALE, 2 * SCALE);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// ---- Paddle movement ----
+function updatePaddle(dt) {
+  const speed = 400 * SCALE * dt;
+  if (touchX !== null) {
+    paddleX = touchX - paddleW / 2;
+  } else if (mouseX !== null) {
+    paddleX = mouseX - paddleW / 2;
+  } else {
+    if (keys['ArrowLeft'] || keys['a'] || keys['A']) paddleX -= speed;
+    if (keys['ArrowRight'] || keys['d'] || keys['D']) paddleX += speed;
+  }
+  paddleX = Math.max(0, Math.min(W - paddleW, paddleX));
+}
+
+// ---- Ball physics ----
+function updateBall(dt) {
+  ball.x += ball.vx * dt * 60;
+  ball.y += ball.vy * dt * 60;
+
+  // Wall collisions
+  if (ball.x - ball.r < 0) { ball.x = ball.r; ball.vx = Math.abs(ball.vx); }
+  if (ball.x + ball.r > W) { ball.x = W - ball.r; ball.vx = -Math.abs(ball.vx); }
+  if (ball.y - ball.r < 0) { ball.y = ball.r; ball.vy = Math.abs(ball.vy); }
+
+  // Bottom (lost life)
+  if (ball.y - ball.r > H) {
+    life--;
+    lifeEl.textContent = life;
+    if (life <= 0) {
+      gameOver();
+    } else {
+      resetBall();
+    }
+    return;
+  }
+
+  // Paddle collision
+  if (
+    ball.y + ball.r >= paddleY &&
+    ball.y - ball.r <= paddleY + paddleH &&
+    ball.x >= paddleX - ball.r &&
+    ball.x <= paddleX + paddleW + ball.r &&
+    ball.vy > 0
+  ) {
+    const hit = (ball.x - paddleX) / paddleW; // 0..1
+    const angle = (hit - 0.5) * 140 * Math.PI / 180; // -70 to +70 deg
+    const speed = Math.hypot(ball.vx, ball.vy);
+    ball.vx = speed * Math.sin(angle);
+    ball.vy = -Math.abs(speed * Math.cos(angle));
+    ball.y = paddleY - ball.r - 1;
+  }
+
+  // Block collision
+  for (const b of blocks) {
+    if (!b.alive) continue;
+    const bx2 = b.x + b.w, by2 = b.y + b.h;
+    const nearX = Math.max(b.x, Math.min(ball.x, bx2));
+    const nearY = Math.max(b.y, Math.min(ball.y, by2));
+    const dx = ball.x - nearX, dy = ball.y - nearY;
+    if (dx * dx + dy * dy < ball.r * ball.r) {
+      b.alive = false;
+      score += 10 * level;
+      scoreEl.textContent = score;
+      // determine bounce direction
+      const overlapX = Math.min(Math.abs(ball.x - b.x), Math.abs(ball.x - bx2));
+      const overlapY = Math.min(Math.abs(ball.y - b.y), Math.abs(ball.y - by2));
+      if (overlapX < overlapY) ball.vx *= -1;
+      else ball.vy *= -1;
+      break;
+    }
+  }
+
+  // Check win
+  if (blocks.every(b => !b.alive)) {
+    gameWin();
+  }
+}
+
+function resetBall() {
+  ball.x = W / 2;
+  ball.y = paddleY - 20 * SCALE;
+  const speed = (4 + level * 0.5) * SCALE;
+  ball.vx = speed * (Math.random() < 0.5 ? 1 : -1);
+  ball.vy = -speed;
+}
+
+function gameOver() {
+  state = 'lost';
+  overlay.classList.remove('hidden');
+  overlayTitle.textContent = 'GAME OVER';
+  overlayTitle.style.color = '#f44';
+  overlayMsg.innerHTML = `スコア: ${score}<br>もう一度挑戦するか？`;
+  startBtn.textContent = 'RETRY';
+}
+
+function gameWin() {
+  if (level >= 5) {
+    state = 'won';
+    overlay.classList.remove('hidden');
+    overlayTitle.textContent = 'COMPLETE!';
+    overlayTitle.style.color = '#4f4';
+    overlayMsg.innerHTML = `全レベルクリア！<br>最終スコア: ${score}`;
+    startBtn.textContent = 'PLAY AGAIN';
+  } else {
+    nextLevel();
+  }
+}
+
+// ---- Main loop ----
+let lastTime = 0;
+function loop(ts = 0) {
+  const dt = Math.min((ts - lastTime) / 1000, 0.05);
+  lastTime = ts;
+  if (state !== 'playing') return;
+
+  updatePaddle(dt);
+  updateBall(dt);
+
+  drawBackground();
+  drawBlocks();
+  drawPaddle();
+  drawBall();
+
+  // HUD
+  levelEl.textContent = level;
+
+  animId = requestAnimationFrame(loop);
+}
+
+// ---- Input ----
+window.addEventListener('keydown', e => { keys[e.key] = true; });
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  mouseX = e.clientX - rect.left;
+  touchX = null;
+});
+canvas.addEventListener('mouseleave', () => { mouseX = null; });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  touchX = e.touches[0].clientX - rect.left;
+  mouseX = null;
+}, { passive: false });
+canvas.addEventListener('touchend', () => { touchX = null; });
+
+// ---- Resize ----
+window.addEventListener('resize', () => {
+  if (state === 'playing') {
+    const oldW = W, oldH = H;
+    updateScale();
+    const sx = W / oldW, sy = H / oldH;
+    paddleX *= sx; paddleY = H - 40 * SCALE; paddleW = 100 * SCALE; paddleH = 12 * SCALE;
+    ball.x *= sx; ball.y *= sy; ball.r = 7 * SCALE;
+    ball.vx *= sx; ball.vy *= sy;
+    for (const b of blocks) {
+      b.x *= sx; b.y *= sy; b.w *= sx; b.h *= sy;
+    }
+  } else {
+    updateScale();
+  }
+});
+
+// ---- Start ----
+startBtn.addEventListener('click', startGame);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && state !== 'playing') startGame();
+});
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (state !== 'playing') startGame();
+}, { passive: false });
+
+updateScale();
+// Initial draw
+drawBackground();
+</script>
+</body>
+</html>
